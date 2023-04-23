@@ -1,0 +1,92 @@
+import boto3
+import io
+import logging
+import os
+import requests
+import zipfile
+import csv
+from typing import List, Tuple
+import xml.etree.ElementTree as ET
+
+# Initialize logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+
+# Define constants
+AWS_ACCESS_KEY_ID = "your_aws_access_key_id"
+AWS_SECRET_ACCESS_KEY = "your_aws_secret_access_key"
+AWS_REGION = "your_aws_region"
+S3_BUCKET_NAME = "your_s3_bucket_name"
+FILE_NAME = "DLTINS_20210117_01of01.xml"
+CSV_HEADER = [
+    "FinInstrmGnlAttrbts.Id",
+    "FinInstrmGnlAttrbts.FullNm",
+    "FinInstrmGnlAttrbts.ClssfctnTp",
+    "FinInstrmGnlAttrbts.CmmdtyDerivInd",
+    "FinInstrmGnlAttrbts.NtnlCcy",
+    "Issr"
+]
+
+def download_file(url: str, file_path: str) -> None:
+    """
+    Download file from the given url and save it to the given file path.
+
+    Args:
+    url (str): The URL to download from.
+    file_path (str): The file path to save to.
+    """
+    try:
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(file_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    except Exception as e:
+        logger.error(f"Failed to download file from {url}: {e}")
+        raise
+
+def extract_xml_from_zip(zip_file_path: str) -> Tuple[str, str]:
+    """
+    Extract the xml file from the given zip file.
+
+    Args:
+    zip_file_path (str): The file path of the zip file to extract from.
+
+    Returns:
+    Tuple[str, str]: The extracted xml file path and xml file name.
+    """
+    try:
+        with zipfile.ZipFile(zip_file_path) as z:
+            xml_file_name = [name for name in z.namelist() if name.endswith(".xml")][0]
+            xml_file_path = os.path.join(os.path.dirname(zip_file_path), xml_file_name)
+            z.extract(xml_file_name, os.path.dirname(zip_file_path))
+            return xml_file_path, xml_file_name
+    except Exception as e:
+        logger.error(f"Failed to extract xml file from {zip_file_path}: {e}")
+        raise
+
+def parse_xml(xml_file_path: str) -> List[List[str]]:
+    """
+    Parse the xml file and extract the required data.
+
+    Args:
+    xml_file_path (str): The file path of the xml file to parse.
+
+    Returns:
+    List[List[str]]: A list of lists, where each list represents a row of data.
+    """
+    try:
+        tree = ET.parse(xml_file_path)
+        root = tree.getroot()
+        data = []
+        for info in root.iter('{urn:iso:std:iso:20022:tech:xsd:head.003.001.01}FinInstrmRptgRefDataReport'):
+            for child in info.iter():
+                if child.tag.endswith("fileType"):
+                    if child.text != "DLTINS":
+                        return data
+                if child.tag.endswith("url"):
+                    url = child.text
+                    response = requests.get(url)
+                    data_xml = response.content
+                    data_tree = ET.fromstring(data_xml)
+                    for report in data_tree.iter('{urn:iso:std:iso:20022:tech:xsd:auth.036.
